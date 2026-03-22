@@ -204,7 +204,7 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
         ET.SubElement(faud2, "channelcount").text = "2"
 
     def make_clip(parent, cid, seg, tl_start, tl_end, src_in, src_out,
-                  file_dur, link_ids, channel=None):
+                  file_dur, self_link, link_ids, channel=None):
         ci = ET.SubElement(parent, "clipitem", id=cid)
         ET.SubElement(ci, "name").text     = seg["name"]
         ET.SubElement(ci, "duration").text = str(tl_end - tl_start)
@@ -225,28 +225,40 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
         else:
             ET.SubElement(ci, "file", id=file_map[fp])
         links = ET.SubElement(ci, "links")
-        for (lref, lmedia, ltrack) in link_ids:
+        # Self-link required by FCP7 spec
+        for (lref, lmedia, ltrack, lidx, gidx) in [self_link] + link_ids:
             lk = ET.SubElement(links, "link")
             ET.SubElement(lk, "linkclipref").text = lref
             ET.SubElement(lk, "mediatype").text   = lmedia
             ET.SubElement(lk, "trackindex").text  = str(ltrack)
-            ET.SubElement(lk, "clipindex").text   = "1"
-            ET.SubElement(lk, "groupindex").text  = "1"
+            ET.SubElement(lk, "clipindex").text   = str(lidx)
+            ET.SubElement(lk, "groupindex").text  = str(gidx)
 
-    for (seg, tl_start, tl_end, src_in, src_out,
-         file_dur, vid_id, aud1_id, aud2_id) in clip_groups:
+    for gi, (seg, tl_start, tl_end, src_in, src_out,
+             file_dur, vid_id, aud1_id, aud2_id) in enumerate(clip_groups, 1):
 
-        # Video — links to both audio channels
+        # Video — self-link + both audio channels
         make_clip(vtrack, vid_id, seg, tl_start, tl_end, src_in, src_out,
-                  file_dur, [(aud1_id, "audio", 1), (aud2_id, "audio", 2)])
+                  file_dur,
+                  self_link=(vid_id,  "video", 1, gi, gi),
+                  link_ids=[(aud1_id, "audio", 1, gi, gi),
+                             (aud2_id, "audio", 2, gi, gi)])
 
-        # Audio ch1 (L) — links to video + ch2
+        # Audio ch1 (L) — self-link + video + ch2
         make_clip(atrack1, aud1_id, seg, tl_start, tl_end, src_in, src_out,
-                  file_dur, [(vid_id, "video", 1), (aud2_id, "audio", 2)], channel=1)
+                  file_dur,
+                  self_link=(aud1_id, "audio", 1, gi, gi),
+                  link_ids=[(vid_id,  "video", 1, gi, gi),
+                             (aud2_id, "audio", 2, gi, gi)],
+                  channel=1)
 
-        # Audio ch2 (R) — links to video + ch1
+        # Audio ch2 (R) — self-link + video + ch1
         make_clip(atrack2, aud2_id, seg, tl_start, tl_end, src_in, src_out,
-                  file_dur, [(vid_id, "video", 1), (aud1_id, "audio", 1)], channel=2)
+                  file_dur,
+                  self_link=(aud2_id, "audio", 2, gi, gi),
+                  link_ids=[(vid_id,  "video", 1, gi, gi),
+                             (aud1_id, "audio", 1, gi, gi)],
+                  channel=2)
 
     for m in markers:
         mk = ET.SubElement(seq, "marker")
