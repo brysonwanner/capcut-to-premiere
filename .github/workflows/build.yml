@@ -26,15 +26,22 @@ jobs:
         run: pip install pyinstaller
 
       - name: Download ffprobe
+        shell: pwsh
         run: |
-          curl -L -o ffprobe.zip https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip
-          7z e ffprobe.zip -o. ffprobe.exe -r -y
-        shell: cmd
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
+          Get-ChildItem -Path ffmpeg_tmp -Recurse -Filter "ffprobe.exe" | Copy-Item -Destination .
+          if (!(Test-Path "ffprobe.exe")) { throw "ffprobe.exe not found" }
+          Write-Host "ffprobe.exe extracted successfully"
 
       - name: Build EXE
         run: pyinstaller capcut_premiere.spec --distpath dist --workpath build
 
-      - name: Upload EXE as artifact
+      - name: Copy ffprobe to dist
+        run: copy ffprobe.exe dist\ffprobe.exe
+        shell: cmd
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: CapCut-XML-Export-Tool-Windows
