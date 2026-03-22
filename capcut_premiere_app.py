@@ -14,7 +14,6 @@ import urllib.request
 import xml.etree.ElementTree as ET
 from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote
-from xml.dom import minidom
 import tkinter as tk
 
 APP_VERSION = "1.3"
@@ -248,10 +247,7 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
         ET.SubElement(mk, "in").text      = str(us_to_frames(m["start_us"], fps))
         ET.SubElement(mk, "out").text     = "-1"
 
-    raw    = ET.tostring(root, encoding="unicode")
-    pretty = minidom.parseString(raw).toprettyxml(indent="  ", encoding=None)
-    lines  = pretty.split("\n", 1)
-    return lines[0] + "\n" + lines[1]
+    return '<?xml version="1.0" encoding="utf-8"?>\n' + ET.tostring(root, encoding="unicode")
 
 
 def find_best_json(folder):
