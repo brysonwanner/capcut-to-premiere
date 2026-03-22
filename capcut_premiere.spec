@@ -28,7 +28,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='CapCut to Premiere',
+    name='CapCut XML Export Tool',
     debug=False,
     strip=False,
     upx=True,

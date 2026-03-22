@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CapCut -> Premiere Pro Converter  v1.0
+CapCut XML Export Tool  v1.1
 Desktop GUI — works with any CapCut project folder.
 """
 
@@ -264,7 +264,7 @@ class App(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("CapCut  →  Premiere Pro Converter  v1.0")
+        self.title("CapCut XML Export Tool  v1.1")
         self.resizable(True, True)
         self.minsize(680, 520)
         self._q     = queue.Queue()
@@ -549,7 +549,7 @@ class App(tk.Tk):
 
     def _show_help(self):
         win = tk.Toplevel(self)
-        win.title("How to Use - CapCut to Premiere Converter")
+        win.title("How to Use - CapCut XML Export Tool")
         win.geometry("640x560")
         win.resizable(True, True)
         txt = tk.Text(win, wrap="word", padx=16, pady=12, font=("Segoe UI", 10), relief="flat")
@@ -559,6 +559,12 @@ class App(tk.Tk):
         txt.pack(fill="both", expand=True)
         txt.tag_configure("h",    font=("Segoe UI", 11, "bold"), spacing1=10, spacing3=4)
         txt.tag_configure("note", foreground="#888888", font=("Segoe UI", 9, "italic"))
+        txt.tag_configure("warn", foreground="#b85c00", font=("Segoe UI", 9, "bold"))
+        txt.insert("end", "Windows SmartScreen Warning" + chr(10), "h")
+        txt.insert("end", "When you first open this app, Windows may show a \"Windows protected your PC\"" + chr(10))
+        txt.insert("end", "warning. This is normal for indie software. Click More info then Run anyway" + chr(10))
+        txt.insert("end", "to launch the app. It is completely safe." + chr(10))
+        txt.insert("end", chr(10))
         txt.insert("end", 'STEP 1 - Save your CapCut project to your PC' + chr(10), "h")
         txt.insert("end", 'Open CapCut Desktop and open your project.' + chr(10))
         txt.insert("end", 'Click every timeline tab you want to export and wait ~5 seconds for each one' + chr(10))
