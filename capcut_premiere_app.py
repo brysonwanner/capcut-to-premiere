@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote
 import tkinter as tk
 
-APP_VERSION = "1.3.2"
+APP_VERSION = "1.3.3"
 GITHUB_REPO = "brysonwanner/capcut-to-premiere"
 RELEASES_URL = "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPO)
 
@@ -579,12 +579,7 @@ class App(tk.Tk):
         threading.Thread(target=fetch, daemon=True).start()
 
     def _show_update_banner(self, tag, url):
-        import webbrowser
-        if messagebox.askyesno(
-            "Update Available",
-            "A new version is available: v{}\nYou have: v{}\n\nOpen the download page now?".format(tag, APP_VERSION)
-        ):
-            webbrowser.open(url)
+        self._log("★ Update available: v{}  —  {}".format(tag, url))
 
     def _show_help(self):
         win = tk.Toplevel(self)
