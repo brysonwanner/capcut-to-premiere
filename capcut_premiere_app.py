@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote
 import tkinter as tk
 
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
 GITHUB_REPO = "brysonwanner/capcut-to-premiere"
 RELEASES_URL = "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPO)
 
@@ -351,13 +351,6 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("CapCut XML Export Tool  v" + APP_VERSION)
-        # Set window icon
-        _icon = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0] or ".")), "icon.ico")
-        if os.path.isfile(_icon):
-            try:
-                self.iconbitmap(_icon)
-            except Exception:
-                pass
         self.resizable(True, True)
         self.minsize(680, 520)
         self._q     = queue.Queue()
