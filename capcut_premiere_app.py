@@ -10,11 +10,16 @@ import queue
 import re
 import sys
 import threading
+import urllib.request
 import xml.etree.ElementTree as ET
 from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote
 from xml.dom import minidom
 import tkinter as tk
+
+APP_VERSION = "1.0"
+GITHUB_REPO = "brysonwanner/capcut-to-premiere"
+RELEASES_URL = "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPO)
 
 PREFS_FILE = os.path.join(os.path.expanduser("~"), ".capcut_converter_prefs.json")
 CANDIDATE_FILES = ["draft_content.json", "template.json", "template.json.bak"]
@@ -267,6 +272,7 @@ class App(tk.Tk):
         self._build_ui()
         self._load_prefs()
         self.after(100, self._poll_queue)
+        self.after(1500, self._check_for_update)
 
     # ── UI construction ───────────────────────────────────────────────────────
 
@@ -466,6 +472,8 @@ class App(tk.Tk):
                     self.export_btn.configure(state="normal")
                     self.open_btn.configure(state="normal")
                     self._save_prefs()
+                elif msg_type == "update":
+                    self._show_update_banner(*msg)
         except queue.Empty:
             pass
         self.after(100, self._poll_queue)
@@ -512,6 +520,32 @@ class App(tk.Tk):
 
 
 
+
+    def _check_for_update(self):
+        def fetch():
+            try:
+                req = urllib.request.Request(RELEASES_URL,
+                      headers={"User-Agent": "capcut-to-premiere"})
+                with urllib.request.urlopen(req, timeout=5) as r:
+                    data = json.loads(r.read())
+                tag = data.get("tag_name", "").lstrip("v")
+                if tag and tag != APP_VERSION:
+                    url = data.get("html_url", "")
+                    self._q.put(("update", (tag, url)))
+            except Exception:
+                pass
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def _show_update_banner(self, tag, url):
+        bar = tk.Frame(self, bg="#2d6a4f", cursor="hand2")
+        bar.pack(fill="x", side="top", before=self.winfo_children()[0])
+        msg = "  ★  Update available: v{}  —  click to download".format(tag)
+        lbl = tk.Label(bar, text=msg, bg="#2d6a4f", fg="white",
+                       font=("Segoe UI", 9, "bold"), anchor="w", padx=10, pady=5)
+        lbl.pack(side="left", fill="x", expand=True)
+        import webbrowser
+        for w in (bar, lbl):
+            w.bind("<Button-1>", lambda e: webbrowser.open(url))
 
     def _show_help(self):
         win = tk.Toplevel(self)
