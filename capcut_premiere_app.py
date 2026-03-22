@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CapCut XML Export Tool  v1.1
+CapCut XML Export Tool  v1.3
 Desktop GUI — works with any CapCut project folder.
 """
 
@@ -17,7 +17,7 @@ from urllib.parse import quote
 from xml.dom import minidom
 import tkinter as tk
 
-APP_VERSION = "1.0"
+APP_VERSION = "1.3"
 GITHUB_REPO = "brysonwanner/capcut-to-premiere"
 RELEASES_URL = "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPO)
 
@@ -310,7 +310,7 @@ class App(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("CapCut XML Export Tool  v1.1")
+        self.title("CapCut XML Export Tool  v1.3")
         self.resizable(True, True)
         self.minsize(680, 520)
         self._q     = queue.Queue()
