@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote
 import tkinter as tk
 
-APP_VERSION = "1.4.0"
+APP_VERSION = "1.5.0"
 GITHUB_REPO = "brysonwanner/capcut-to-premiere"
 RELEASES_URL = "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPO)
 
@@ -35,76 +35,28 @@ RESOLUTIONS = [
 
 # ── Converter logic ───────────────────────────────────────────────────────────
 
-import struct as _struct
+import subprocess as _sp
+import shutil as _shutil
 
 def get_audio_channels(path):
-    """Read audio channel count from a MOV/MP4 file. Returns int or 2 as default."""
+    """Read audio channel count from a media file using ffprobe. Returns int or 2."""
+    # Look for ffprobe next to the app first, then on PATH
+    app_dir = os.path.dirname(os.path.abspath(sys.argv[0] or "."))
+    local_ffprobe = os.path.join(app_dir, "ffprobe.exe" if sys.platform == "win32" else "ffprobe")
+    ffprobe = local_ffprobe if os.path.isfile(local_ffprobe) else _shutil.which("ffprobe")
+    if not ffprobe:
+        return 2  # can't detect, assume stereo
     try:
-        with open(path, 'rb') as f:
-            header = f.read(4 * 1024 * 1024)   # first 4 MB
-            try:
-                f.seek(-2 * 1024 * 1024, 2)
-                footer = f.read()
-            except Exception:
-                footer = b''
-        data = header + footer
-
-        def iter_boxes(buf, start, end):
-            pos = start
-            while pos + 8 <= min(end, len(buf)):
-                size = _struct.unpack_from('>I', buf, pos)[0]
-                btype = buf[pos+4:pos+8]
-                if size == 1 and pos + 16 <= len(buf):   # 64-bit size
-                    size = _struct.unpack_from('>Q', buf, pos+8)[0]
-                    dstart = pos + 16
-                elif size < 8:
-                    break
-                else:
-                    dstart = pos + 8
-                bend = min(pos + size, end)
-                yield btype, dstart, bend
-                pos += max(size, 8)
-
-        # Walk moov → trak (audio) → mdia → minf → stbl → stsd
-        def find_box(buf, start, end, target):
-            for bt, ds, be in iter_boxes(buf, start, end):
-                if bt == target:
-                    return ds, be
-            return None, None
-
-        m_ds, m_be = find_box(data, 0, len(data), b'moov')
-        if m_ds is None:
-            return 2  # default stereo
-
-        for bt, trak_ds, trak_be in iter_boxes(data, m_ds, m_be):
-            if bt != b'trak':
-                continue
-            if b'soun' not in data[trak_ds:trak_be]:
-                continue
-            # audio track — dig into stsd
-            mdia_ds, mdia_be = find_box(data, trak_ds, trak_be, b'mdia')
-            if mdia_ds is None:
-                continue
-            minf_ds, minf_be = find_box(data, mdia_ds, mdia_be, b'minf')
-            if minf_ds is None:
-                continue
-            stbl_ds, stbl_be = find_box(data, minf_ds, minf_be, b'stbl')
-            if stbl_ds is None:
-                continue
-            stsd_ds, stsd_be = find_box(data, stbl_ds, stbl_be, b'stsd')
-            if stsd_ds is None:
-                continue
-            # stsd: 4 version/flags + 4 entry count, then first SoundSampleEntry
-            entry = stsd_ds + 8   # skip version/flags + count
-            # SoundSampleEntry: 4 size + 4 type + 6 reserved + 2 data_ref + 8 reserved + 2 channels
-            ch_off = entry + 4 + 4 + 6 + 2 + 8
-            if ch_off + 2 <= stsd_be and ch_off + 2 <= len(data):
-                ch = _struct.unpack_from('>H', data, ch_off)[0]
-                if 0 < ch <= 32:
-                    return ch
+        out = _sp.run(
+            [ffprobe, "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=channels", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(_sp, "CREATE_NO_WINDOW", 0),
+        )
+        ch = int(out.stdout.strip())
+        return ch if ch > 0 else 2
     except Exception:
-        pass
-    return 2  # default stereo
+        return 2  # default stereo
 
 
 def us_to_frames(us, fps):
