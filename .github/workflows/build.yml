@@ -37,8 +37,10 @@ jobs:
       - name: Build EXE
         run: pyinstaller capcut_premiere.spec --distpath dist --workpath build
 
-      - name: Copy ffprobe to dist
-        run: copy ffprobe.exe dist\ffprobe.exe
+      - name: Copy ffprobe and icon to dist
+        run: |
+          copy ffprobe.exe dist\ffprobe.exe
+          copy icon.ico dist\icon.ico
         shell: cmd
 
       - name: Upload artifacts
@@ -48,6 +50,7 @@ jobs:
           path: |
             dist/CapCut XML Export Tool.exe
             dist/ffprobe.exe
+            dist/icon.ico
 
       - name: Create GitHub Release and attach files
         if: startsWith(github.ref, 'refs/tags/')
@@ -56,3 +59,4 @@ jobs:
           files: |
             dist/CapCut XML Export Tool.exe
             dist/ffprobe.exe
+            dist/icon.ico

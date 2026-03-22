@@ -10,7 +10,7 @@ a = Analysis(
     ['capcut_premiere_app.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('icon.ico', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -33,7 +33,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
-    # icon='icon.ico',  # add icon.ico here when ready
+    icon='icon.ico',
 )
 
 if sys.platform == 'darwin':
