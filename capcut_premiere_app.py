@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote
 import tkinter as tk
 
-APP_VERSION = "1.5.2"
+APP_VERSION = "1.6.0"
 GITHUB_REPO = "brysonwanner/capcut-to-premiere"
 RELEASES_URL = "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPO)
 
@@ -118,6 +118,7 @@ def extract_markers(data):
 def extract_segments(data, project_root):
     mat_map = {v["id"]: v for v in data.get("materials", {}).get("videos", [])}
     segs = []
+    video_track_idx = 0
     for track in data.get("tracks", []):
         if track.get("type") != "video":
             continue
@@ -141,8 +142,10 @@ def extract_segments(data, project_root):
                 "tl_dur_us":    tl_dur,
                 "src_start_us": (sr or {}).get("start", 0),
                 "src_dur_us":   src_dur,
+                "track_index":  video_track_idx,
             })
-    segs.sort(key=lambda s: s["tl_start_us"])
+        video_track_idx += 1
+    segs.sort(key=lambda s: (s["track_index"], s["tl_start_us"]))
     return segs
 
 
@@ -172,7 +175,9 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
     vsc.append(make_rate(fps_int))
     ET.SubElement(vsc, "width").text  = str(width)
     ET.SubElement(vsc, "height").text = str(height)
-    vtrack  = ET.SubElement(video, "track")
+    # ── Determine how many video tracks we need ─────────────────────────────
+    num_vtracks = max((seg.get("track_index", 0) for seg in segments), default=0) + 1
+    vtracks = [ET.SubElement(video, "track") for _ in range(num_vtracks)]
 
     # ── Audio — detect channels per file, use correct track count ─────────────
     audio   = ET.SubElement(media, "audio")
@@ -181,8 +186,12 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
     asc     = ET.SubElement(afmt, "samplecharacteristics")
     ET.SubElement(asc, "depth").text      = "16"
     ET.SubElement(asc, "samplerate").text = "48000"
-    atrack1 = ET.SubElement(audio, "track")   # ch1 (mono or L)
-    atrack2 = ET.SubElement(audio, "track")   # ch2 (R, stereo only)
+    # Two audio tracks per video track (ch1/ch2 for stereo support)
+    atracks1 = []   # ch1 tracks (mono or L)
+    atracks2 = []   # ch2 tracks (R, stereo only)
+    for _ in range(num_vtracks):
+        atracks1.append(ET.SubElement(audio, "track"))
+        atracks2.append(ET.SubElement(audio, "track"))
 
     file_map      = {}   # path → file id
     file_ch_map   = {}   # path → channel count (cached per unique file)
@@ -207,11 +216,12 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
         if fp not in file_ch_map:
             file_ch_map[fp] = get_audio_channels(fp) if os.path.isfile(fp) else 2
         channels = file_ch_map[fp]
+        track_idx = seg.get("track_index", 0)
         vid_id  = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
         aud1_id = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
         aud2_id = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
         clip_groups.append((seg, tl_start, tl_end, src_in, src_out,
-                            file_dur, vid_id, aud1_id, aud2_id, channels))
+                            file_dur, vid_id, aud1_id, aud2_id, channels, track_idx))
 
     def add_file_block(parent, seg, fid, file_dur, channels):
         fblock = ET.SubElement(parent, "file", id=fid)
@@ -261,27 +271,30 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
             ET.SubElement(lk, "clipindex").text   = str(lidx)
 
     for gi, (seg, tl_start, tl_end, src_in, src_out,
-             file_dur, vid_id, aud1_id, aud2_id, channels) in enumerate(clip_groups, 1):
+             file_dur, vid_id, aud1_id, aud2_id, channels, track_idx) in enumerate(clip_groups, 1):
 
         stereo = channels >= 2
+        v_track_num  = track_idx + 1        # 1-based for FCP7 XML
+        a1_track_num = track_idx * 2 + 1    # audio tracks: 1,3,5...
+        a2_track_num = track_idx * 2 + 2    # audio tracks: 2,4,6...
 
         # Build link list based on channel count
         if stereo:
-            all_links = [(vid_id, "video", 1, gi),
-                         (aud1_id, "audio", 1, gi),
-                         (aud2_id, "audio", 2, gi)]
+            all_links = [(vid_id,  "video", v_track_num,  gi),
+                         (aud1_id, "audio", a1_track_num, gi),
+                         (aud2_id, "audio", a2_track_num, gi)]
         else:
-            all_links = [(vid_id, "video", 1, gi),
-                         (aud1_id, "audio", 1, gi)]
+            all_links = [(vid_id,  "video", v_track_num,  gi),
+                         (aud1_id, "audio", a1_track_num, gi)]
 
-        make_clip(vtrack, vid_id, seg, tl_start, tl_end, src_in, src_out,
+        make_clip(vtracks[track_idx], vid_id, seg, tl_start, tl_end, src_in, src_out,
                   file_dur, link_ids=all_links, channels=channels)
 
-        make_clip(atrack1, aud1_id, seg, tl_start, tl_end, src_in, src_out,
+        make_clip(atracks1[track_idx], aud1_id, seg, tl_start, tl_end, src_in, src_out,
                   file_dur, link_ids=all_links, channels=channels, channel=1)
 
         if stereo:
-            make_clip(atrack2, aud2_id, seg, tl_start, tl_end, src_in, src_out,
+            make_clip(atracks2[track_idx], aud2_id, seg, tl_start, tl_end, src_in, src_out,
                       file_dur, link_ids=all_links, channels=channels, channel=2)
 
     for m in markers:
