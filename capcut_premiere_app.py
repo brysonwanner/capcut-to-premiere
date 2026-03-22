@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote
 import tkinter as tk
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 GITHUB_REPO = "brysonwanner/capcut-to-premiere"
 RELEASES_URL = "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPO)
 
@@ -116,40 +116,68 @@ def extract_markers(data):
 
 
 def extract_segments(data, project_root):
-    mat_map = {v["id"]: v for v in data.get("materials", {}).get("videos", [])}
+    vid_mat_map = {v["id"]: v for v in data.get("materials", {}).get("videos", [])}
+    aud_mat_map = {a["id"]: a for a in data.get("materials", {}).get("audios", [])}
     segs = []
+    audio_only_segs = []
     video_track_idx = 0
+    audio_only_track_idx = 0
     for track in data.get("tracks", []):
-        if track.get("type") != "video":
-            continue
-        for seg in track.get("segments", []):
-            mat = mat_map.get(seg.get("material_id"), {})
-            raw = mat.get("path", "")
-            if not raw:
-                continue
-            resolved = resolve_path(raw, project_root)
-            tr = seg.get("target_timerange") or {}
-            sr = seg.get("source_timerange") or {}
-            tl_dur  = tr.get("duration", 0)
-            src_dur = (sr or {}).get("duration", tl_dur)
-            if tl_dur <= 0 or src_dur <= 0:
-                continue
-            segs.append({
-                "name":         os.path.basename(resolved),
-                "file_path":    resolved,
-                "file_dur_us":  mat.get("duration", 0),
-                "tl_start_us":  tr.get("start", 0),
-                "tl_dur_us":    tl_dur,
-                "src_start_us": (sr or {}).get("start", 0),
-                "src_dur_us":   src_dur,
-                "track_index":  video_track_idx,
-            })
-        video_track_idx += 1
+        ttype = track.get("type", "")
+        if ttype == "video":
+            for seg in track.get("segments", []):
+                mat = vid_mat_map.get(seg.get("material_id"), {})
+                raw = mat.get("path", "")
+                if not raw:
+                    continue
+                resolved = resolve_path(raw, project_root)
+                tr = seg.get("target_timerange") or {}
+                sr = seg.get("source_timerange") or {}
+                tl_dur  = tr.get("duration", 0)
+                src_dur = (sr or {}).get("duration", tl_dur)
+                if tl_dur <= 0 or src_dur <= 0:
+                    continue
+                segs.append({
+                    "name":         os.path.basename(resolved),
+                    "file_path":    resolved,
+                    "file_dur_us":  mat.get("duration", 0),
+                    "tl_start_us":  tr.get("start", 0),
+                    "tl_dur_us":    tl_dur,
+                    "src_start_us": (sr or {}).get("start", 0),
+                    "src_dur_us":   src_dur,
+                    "track_index":  video_track_idx,
+                })
+            video_track_idx += 1
+        elif ttype == "audio":
+            for seg in track.get("segments", []):
+                mat = aud_mat_map.get(seg.get("material_id"), {})
+                raw = mat.get("path", "")
+                if not raw:
+                    continue
+                resolved = resolve_path(raw, project_root)
+                tr = seg.get("target_timerange") or {}
+                sr = seg.get("source_timerange") or {}
+                tl_dur  = tr.get("duration", 0)
+                src_dur = (sr or {}).get("duration", tl_dur)
+                if tl_dur <= 0 or src_dur <= 0:
+                    continue
+                audio_only_segs.append({
+                    "name":         os.path.basename(resolved),
+                    "file_path":    resolved,
+                    "file_dur_us":  mat.get("duration", 0),
+                    "tl_start_us":  tr.get("start", 0),
+                    "tl_dur_us":    tl_dur,
+                    "src_start_us": (sr or {}).get("start", 0),
+                    "src_dur_us":   src_dur,
+                    "audio_track_index": audio_only_track_idx,
+                })
+            audio_only_track_idx += 1
     segs.sort(key=lambda s: (s["track_index"], s["tl_start_us"]))
-    return segs
+    audio_only_segs.sort(key=lambda s: (s["audio_track_index"], s["tl_start_us"]))
+    return segs, audio_only_segs
 
 
-def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=2160, offline=False):
+def build_xmeml(name, fps, duration_us, segments, markers, audio_segments=None, width=3840, height=2160, offline=False):
     fps_int  = round(fps)
     root     = ET.Element("xmeml", version="4")
     bin_el   = ET.SubElement(root, "bin")
@@ -297,6 +325,61 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
             make_clip(atracks2[track_idx], aud2_id, seg, tl_start, tl_end, src_in, src_out,
                       file_dur, link_ids=all_links, channels=channels, channel=2)
 
+    # ── Audio-only tracks (SFX, music, VO from CapCut audio tracks) ──────────
+    if audio_segments is None:
+        audio_segments = []
+    num_ao_tracks = max((s.get("audio_track_index", 0) for s in audio_segments), default=-1) + 1
+    # audio track numbering continues after video-paired audio tracks
+    ao_track_base = num_vtracks * 2  # 0-based offset for audio-only tracks
+    ao_tracks_ch1 = []
+    ao_tracks_ch2 = []
+    for _ in range(num_ao_tracks):
+        ao_tracks_ch1.append(ET.SubElement(audio, "track"))
+        ao_tracks_ch2.append(ET.SubElement(audio, "track"))
+
+    ao_clip_groups = []
+    for seg in audio_segments:
+        tl_start = us_to_frames(seg["tl_start_us"], fps)
+        tl_end   = us_to_frames(seg["tl_start_us"] + seg["tl_dur_us"], fps)
+        src_in   = us_to_frames(seg["src_start_us"], fps)
+        src_out  = us_to_frames(seg["src_start_us"] + seg["src_dur_us"], fps)
+        file_dur = us_to_frames(max(seg["file_dur_us"],
+                                    seg["src_start_us"] + seg["src_dur_us"]), fps)
+        if tl_end <= tl_start:
+            continue
+        if src_out <= src_in:
+            src_out = src_in + (tl_end - tl_start)
+        if file_dur <= 0:
+            file_dur = src_out
+        fp = seg["file_path"]
+        if fp not in file_ch_map:
+            file_ch_map[fp] = get_audio_channels(fp) if os.path.isfile(fp) else 2
+        channels = file_ch_map[fp]
+        ao_tidx = seg.get("audio_track_index", 0)
+        aud1_id = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
+        aud2_id = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
+        ao_clip_groups.append((seg, tl_start, tl_end, src_in, src_out,
+                               file_dur, aud1_id, aud2_id, channels, ao_tidx))
+
+    for aogi, (seg, tl_start, tl_end, src_in, src_out,
+               file_dur, aud1_id, aud2_id, channels, ao_tidx) in enumerate(ao_clip_groups, len(clip_groups) + 1):
+        stereo = channels >= 2
+        a1_track_num = ao_track_base + ao_tidx * 2 + 1
+        a2_track_num = ao_track_base + ao_tidx * 2 + 2
+
+        if stereo:
+            all_links = [(aud1_id, "audio", a1_track_num, aogi),
+                         (aud2_id, "audio", a2_track_num, aogi)]
+        else:
+            all_links = [(aud1_id, "audio", a1_track_num, aogi)]
+
+        make_clip(ao_tracks_ch1[ao_tidx], aud1_id, seg, tl_start, tl_end, src_in, src_out,
+                  file_dur, link_ids=all_links, channels=channels, channel=1)
+
+        if stereo:
+            make_clip(ao_tracks_ch2[ao_tidx], aud2_id, seg, tl_start, tl_end, src_in, src_out,
+                      file_dur, link_ids=all_links, channels=channels, channel=2)
+
     for m in markers:
         mk = ET.SubElement(seq, "marker")
         ET.SubElement(mk, "comment").text = m["title"]
@@ -340,7 +423,7 @@ def scan_project(project_folder):
                 continue
             fps  = data.get("fps", 30.0)
             dur  = data.get("duration", 0)
-            segs = extract_segments(data, project_folder)
+            segs, audio_segs = extract_segments(data, project_folder)
             marks = extract_markers(data)
             tl_name = names.get(uid, "") or ""
             results.append({
@@ -351,8 +434,9 @@ def scan_project(project_folder):
                 "fps":      fps,
                 "dur":      dur,
                 "segs":     segs,
+                "audio_segs": audio_segs,
                 "markers":  marks,
-                "has_data": dur > 0 and len(segs) > 0,
+                "has_data": dur > 0 and (len(segs) > 0 or len(audio_segs) > 0),
             })
     return results
 
@@ -493,9 +577,10 @@ class App(tk.Tk):
             dur_str = "{:d}h {:02d}m {:02d}s".format(h, m, s)
             status  = "Ready" if tl["has_data"] else "Empty — skip"
             tag     = "ready" if tl["has_data"] else "skip"
+            total_clips = len(tl["segs"]) + len(tl.get("audio_segs", []))
             self.tree.insert("", "end", values=(
                 tl["name"], dur_str,
-                str(len(tl["segs"])),
+                str(total_clips),
                 str(len(tl["markers"])),
                 status,
             ), tags=(tag,))
@@ -543,6 +628,7 @@ class App(tk.Tk):
                 try:
                     xml = build_xmeml(tl["name"], tl["fps"], tl["dur"],
                                       tl["segs"], tl["markers"],
+                                      audio_segments=tl.get("audio_segs", []),
                                       width=width, height=height,
                                       offline=offline)
                     safe_name = sanitize_filename(tl["name"]) or tl["uid"][:8]
@@ -550,8 +636,10 @@ class App(tk.Tk):
                     fpath = os.path.join(out, fname)
                     with open(fpath, "w", encoding="utf-8") as f:
                         f.write(xml)
-                    msg = "  OK    {} — {} clips, {} markers".format(
-                        fname, len(tl["segs"]), len(tl["markers"]))
+                    total_clips = len(tl["segs"]) + len(tl.get("audio_segs", []))
+                    msg = "  OK    {} — {} clips ({} video, {} audio-only), {} markers".format(
+                        fname, total_clips, len(tl["segs"]),
+                        len(tl.get("audio_segs", [])), len(tl["markers"]))
                     self._q.put(("log", msg))
                     exported += 1
                 except Exception as e:
