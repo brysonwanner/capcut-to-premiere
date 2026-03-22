@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote
 import tkinter as tk
 
-APP_VERSION = "1.3"
+APP_VERSION = "1.3.2"
 GITHUB_REPO = "brysonwanner/capcut-to-premiere"
 RELEASES_URL = "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPO)
 
@@ -567,8 +567,8 @@ class App(tk.Tk):
         def fetch():
             try:
                 req = urllib.request.Request(RELEASES_URL,
-                      headers={"User-Agent": "capcut-to-premiere"})
-                with urllib.request.urlopen(req, timeout=5) as r:
+                      headers={"User-Agent": "capcut-xml-export-tool"})
+                with urllib.request.urlopen(req, timeout=8) as r:
                     data = json.loads(r.read())
                 tag = data.get("tag_name", "").lstrip("v")
                 if tag and tag != APP_VERSION:
@@ -579,15 +579,12 @@ class App(tk.Tk):
         threading.Thread(target=fetch, daemon=True).start()
 
     def _show_update_banner(self, tag, url):
-        bar = tk.Frame(self, bg="#2d6a4f", cursor="hand2")
-        bar.pack(fill="x", side="top", before=self.winfo_children()[0])
-        msg = "  ★  Update available: v{}  —  click to download".format(tag)
-        lbl = tk.Label(bar, text=msg, bg="#2d6a4f", fg="white",
-                       font=("Segoe UI", 9, "bold"), anchor="w", padx=10, pady=5)
-        lbl.pack(side="left", fill="x", expand=True)
         import webbrowser
-        for w in (bar, lbl):
-            w.bind("<Button-1>", lambda e: webbrowser.open(url))
+        if messagebox.askyesno(
+            "Update Available",
+            "A new version is available: v{}\nYou have: v{}\n\nOpen the download page now?".format(tag, APP_VERSION)
+        ):
+            webbrowser.open(url)
 
     def _show_help(self):
         win = tk.Toplevel(self)
