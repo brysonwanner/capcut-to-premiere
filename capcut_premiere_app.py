@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote
 import tkinter as tk
 
-APP_VERSION = "1.3.3"
+APP_VERSION = "1.3.6"
 GITHUB_REPO = "brysonwanner/capcut-to-premiere"
 RELEASES_URL = "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPO)
 
@@ -201,7 +201,6 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
         fasc2  = ET.SubElement(faud2, "samplecharacteristics")
         ET.SubElement(fasc2, "depth").text      = "16"
         ET.SubElement(fasc2, "samplerate").text = "48000"
-        ET.SubElement(faud2, "channelcount").text = "2"
 
     def make_clip(parent, cid, seg, tl_start, tl_end, src_in, src_out,
                   file_dur, self_link, link_ids, channel=None):
