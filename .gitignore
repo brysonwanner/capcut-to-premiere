@@ -1,0 +1,13 @@
+# PyInstaller build artifacts
+build/
+dist/
+*.spec.bak
+__pycache__/
+*.pyc
+
+# User prefs (machine-specific)
+.capcut_converter_prefs.json
+
+# OS clutter
+.DS_Store
+Thumbs.db

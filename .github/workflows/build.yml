@@ -1,0 +1,39 @@
+name: Build Windows EXE
+
+on:
+  push:
+    tags:
+      - 'v*'          # triggers on version tags like v1.0, v1.1, v2.0
+  workflow_dispatch:  # lets you trigger a build manually from GitHub
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyInstaller
+        run: pip install pyinstaller
+
+      - name: Build EXE
+        run: pyinstaller capcut_premiere.spec --distpath dist --workpath build
+
+      - name: Upload EXE as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CapCut-to-Premiere-Windows
+          path: dist/CapCut to Premiere.exe
+
+      - name: Create GitHub Release and attach EXE
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/CapCut to Premiere.exe
+          generate_release_notes: true
