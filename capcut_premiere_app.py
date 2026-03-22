@@ -16,7 +16,7 @@ from tkinter import filedialog, messagebox, ttk
 from urllib.parse import quote
 import tkinter as tk
 
-APP_VERSION = "1.3.6"
+APP_VERSION = "1.4.0"
 GITHUB_REPO = "brysonwanner/capcut-to-premiere"
 RELEASES_URL = "https://api.github.com/repos/{}/releases/latest".format(GITHUB_REPO)
 
@@ -34,6 +34,78 @@ RESOLUTIONS = [
 
 
 # ── Converter logic ───────────────────────────────────────────────────────────
+
+import struct as _struct
+
+def get_audio_channels(path):
+    """Read audio channel count from a MOV/MP4 file. Returns int or 2 as default."""
+    try:
+        with open(path, 'rb') as f:
+            header = f.read(4 * 1024 * 1024)   # first 4 MB
+            try:
+                f.seek(-2 * 1024 * 1024, 2)
+                footer = f.read()
+            except Exception:
+                footer = b''
+        data = header + footer
+
+        def iter_boxes(buf, start, end):
+            pos = start
+            while pos + 8 <= min(end, len(buf)):
+                size = _struct.unpack_from('>I', buf, pos)[0]
+                btype = buf[pos+4:pos+8]
+                if size == 1 and pos + 16 <= len(buf):   # 64-bit size
+                    size = _struct.unpack_from('>Q', buf, pos+8)[0]
+                    dstart = pos + 16
+                elif size < 8:
+                    break
+                else:
+                    dstart = pos + 8
+                bend = min(pos + size, end)
+                yield btype, dstart, bend
+                pos += max(size, 8)
+
+        # Walk moov → trak (audio) → mdia → minf → stbl → stsd
+        def find_box(buf, start, end, target):
+            for bt, ds, be in iter_boxes(buf, start, end):
+                if bt == target:
+                    return ds, be
+            return None, None
+
+        m_ds, m_be = find_box(data, 0, len(data), b'moov')
+        if m_ds is None:
+            return 2  # default stereo
+
+        for bt, trak_ds, trak_be in iter_boxes(data, m_ds, m_be):
+            if bt != b'trak':
+                continue
+            if b'soun' not in data[trak_ds:trak_be]:
+                continue
+            # audio track — dig into stsd
+            mdia_ds, mdia_be = find_box(data, trak_ds, trak_be, b'mdia')
+            if mdia_ds is None:
+                continue
+            minf_ds, minf_be = find_box(data, mdia_ds, mdia_be, b'minf')
+            if minf_ds is None:
+                continue
+            stbl_ds, stbl_be = find_box(data, minf_ds, minf_be, b'stbl')
+            if stbl_ds is None:
+                continue
+            stsd_ds, stsd_be = find_box(data, stbl_ds, stbl_be, b'stsd')
+            if stsd_ds is None:
+                continue
+            # stsd: 4 version/flags + 4 entry count, then first SoundSampleEntry
+            entry = stsd_ds + 8   # skip version/flags + count
+            # SoundSampleEntry: 4 size + 4 type + 6 reserved + 2 data_ref + 8 reserved + 2 channels
+            ch_off = entry + 4 + 4 + 6 + 2 + 8
+            if ch_off + 2 <= stsd_be and ch_off + 2 <= len(data):
+                ch = _struct.unpack_from('>H', data, ch_off)[0]
+                if 0 < ch <= 32:
+                    return ch
+    except Exception:
+        pass
+    return 2  # default stereo
+
 
 def us_to_frames(us, fps):
     return round(us * fps / 1000000)
@@ -150,20 +222,21 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
     ET.SubElement(vsc, "height").text = str(height)
     vtrack  = ET.SubElement(video, "track")
 
-    # ── Audio — one stereo track, no channel splitting ────────────────────────
-    audio  = ET.SubElement(media, "audio")
+    # ── Audio — detect channels per file, use correct track count ─────────────
+    audio   = ET.SubElement(media, "audio")
     ET.SubElement(audio, "numOutputChannels").text = "2"
-    afmt   = ET.SubElement(audio, "format")
-    asc    = ET.SubElement(afmt, "samplecharacteristics")
+    afmt    = ET.SubElement(audio, "format")
+    asc     = ET.SubElement(afmt, "samplecharacteristics")
     ET.SubElement(asc, "depth").text      = "16"
     ET.SubElement(asc, "samplerate").text = "48000"
-    atrack = ET.SubElement(audio, "track")
+    atrack1 = ET.SubElement(audio, "track")   # ch1 (mono or L)
+    atrack2 = ET.SubElement(audio, "track")   # ch2 (R, stereo only)
 
-    file_map = {}
-    file_ctr = [1]
-    clip_ctr = [1]
+    file_map      = {}   # path → file id
+    file_ch_map   = {}   # path → channel count (cached per unique file)
+    file_ctr      = [1]
+    clip_ctr      = [1]
 
-    # Pre-process segments — 2 IDs per clip (video + 1 stereo audio)
     clip_groups = []
     for seg in segments:
         tl_start = us_to_frames(seg["tl_start_us"], fps)
@@ -178,12 +251,17 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
             src_out = src_in + (tl_end - tl_start)
         if file_dur <= 0:
             file_dur = src_out
-        vid_id = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
-        aud_id = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
+        fp = seg["file_path"]
+        if fp not in file_ch_map:
+            file_ch_map[fp] = get_audio_channels(fp) if os.path.isfile(fp) else 2
+        channels = file_ch_map[fp]
+        vid_id  = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
+        aud1_id = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
+        aud2_id = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
         clip_groups.append((seg, tl_start, tl_end, src_in, src_out,
-                            file_dur, vid_id, aud_id))
+                            file_dur, vid_id, aud1_id, aud2_id, channels))
 
-    def add_file_block(parent, seg, fid, file_dur):
+    def add_file_block(parent, seg, fid, file_dur, channels):
         fblock = ET.SubElement(parent, "file", id=fid)
         ET.SubElement(fblock, "name").text    = seg["name"]
         ET.SubElement(fblock, "pathurl").text = to_file_url(seg["file_path"], offline=offline)
@@ -197,11 +275,12 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
         ET.SubElement(fvsc2, "height").text = str(height)
         faud2  = ET.SubElement(fmedia, "audio")
         fasc2  = ET.SubElement(faud2, "samplecharacteristics")
-        ET.SubElement(fasc2, "depth").text      = "16"
-        ET.SubElement(fasc2, "samplerate").text = "48000"
+        ET.SubElement(fasc2, "depth").text        = "16"
+        ET.SubElement(fasc2, "samplerate").text   = "48000"
+        ET.SubElement(faud2, "channelcount").text = str(channels)
 
     def make_clip(parent, cid, seg, tl_start, tl_end, src_in, src_out,
-                  file_dur, link_vid, link_aud, gi, is_audio=False):
+                  file_dur, link_ids, channels, channel=None):
         ci = ET.SubElement(parent, "clipitem", id=cid)
         ET.SubElement(ci, "name").text     = seg["name"]
         ET.SubElement(ci, "duration").text = str(tl_end - tl_start)
@@ -210,30 +289,48 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
         ET.SubElement(ci, "end").text   = str(tl_end)
         ET.SubElement(ci, "in").text    = str(src_in)
         ET.SubElement(ci, "out").text   = str(src_out)
+        if channel is not None:
+            st = ET.SubElement(ci, "sourcetrack")
+            ET.SubElement(st, "mediatype").text  = "audio"
+            ET.SubElement(st, "trackindex").text = str(channel)
         fp = seg["file_path"]
         if fp not in file_map:
             fid = "file-{}".format(file_ctr[0]); file_ctr[0] += 1
             file_map[fp] = fid
-            add_file_block(ci, seg, fid, file_dur)
+            add_file_block(ci, seg, fid, file_dur, channels)
         else:
             ET.SubElement(ci, "file", id=file_map[fp])
-        # Links — video clip links to audio, audio clip links to video
         links = ET.SubElement(ci, "links")
-        for (lref, lmedia, ltrack) in [(link_vid, "video", 1), (link_aud, "audio", 1)]:
+        for (lref, lmedia, ltrack, lidx) in link_ids:
             lk = ET.SubElement(links, "link")
             ET.SubElement(lk, "linkclipref").text = lref
             ET.SubElement(lk, "mediatype").text   = lmedia
-            ET.SubElement(lk, "trackindex").text  = "1"
-            ET.SubElement(lk, "clipindex").text   = str(gi)
+            ET.SubElement(lk, "trackindex").text  = str(ltrack)
+            ET.SubElement(lk, "clipindex").text   = str(lidx)
 
     for gi, (seg, tl_start, tl_end, src_in, src_out,
-             file_dur, vid_id, aud_id) in enumerate(clip_groups, 1):
+             file_dur, vid_id, aud1_id, aud2_id, channels) in enumerate(clip_groups, 1):
+
+        stereo = channels >= 2
+
+        # Build link list based on channel count
+        if stereo:
+            all_links = [(vid_id, "video", 1, gi),
+                         (aud1_id, "audio", 1, gi),
+                         (aud2_id, "audio", 2, gi)]
+        else:
+            all_links = [(vid_id, "video", 1, gi),
+                         (aud1_id, "audio", 1, gi)]
 
         make_clip(vtrack, vid_id, seg, tl_start, tl_end, src_in, src_out,
-                  file_dur, link_vid=vid_id, link_aud=aud_id, gi=gi)
+                  file_dur, link_ids=all_links, channels=channels)
 
-        make_clip(atrack, aud_id, seg, tl_start, tl_end, src_in, src_out,
-                  file_dur, link_vid=vid_id, link_aud=aud_id, gi=gi, is_audio=True)
+        make_clip(atrack1, aud1_id, seg, tl_start, tl_end, src_in, src_out,
+                  file_dur, link_ids=all_links, channels=channels, channel=1)
+
+        if stereo:
+            make_clip(atrack2, aud2_id, seg, tl_start, tl_end, src_in, src_out,
+                      file_dur, link_ids=all_links, channels=channels, channel=2)
 
     for m in markers:
         mk = ET.SubElement(seq, "marker")
