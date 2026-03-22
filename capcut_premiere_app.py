@@ -150,21 +150,20 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
     ET.SubElement(vsc, "height").text = str(height)
     vtrack  = ET.SubElement(video, "track")
 
-    # ── Audio ─────────────────────────────────────────────────────────────────
-    audio   = ET.SubElement(media, "audio")
+    # ── Audio — one stereo track, no channel splitting ────────────────────────
+    audio  = ET.SubElement(media, "audio")
     ET.SubElement(audio, "numOutputChannels").text = "2"
-    afmt    = ET.SubElement(audio, "format")
-    asc     = ET.SubElement(afmt, "samplecharacteristics")
+    afmt   = ET.SubElement(audio, "format")
+    asc    = ET.SubElement(afmt, "samplecharacteristics")
     ET.SubElement(asc, "depth").text      = "16"
     ET.SubElement(asc, "samplerate").text = "48000"
-    atrack1 = ET.SubElement(audio, "track")   # ch 1 (L)
-    atrack2 = ET.SubElement(audio, "track")   # ch 2 (R)
+    atrack = ET.SubElement(audio, "track")
 
     file_map = {}
     file_ctr = [1]
     clip_ctr = [1]
 
-    # Pre-process segments and assign IDs (3 per clip: video + 2 audio)
+    # Pre-process segments — 2 IDs per clip (video + 1 stereo audio)
     clip_groups = []
     for seg in segments:
         tl_start = us_to_frames(seg["tl_start_us"], fps)
@@ -179,11 +178,10 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
             src_out = src_in + (tl_end - tl_start)
         if file_dur <= 0:
             file_dur = src_out
-        vid_id  = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
-        aud1_id = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
-        aud2_id = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
+        vid_id = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
+        aud_id = "clipitem-{}".format(clip_ctr[0]); clip_ctr[0] += 1
         clip_groups.append((seg, tl_start, tl_end, src_in, src_out,
-                            file_dur, vid_id, aud1_id, aud2_id))
+                            file_dur, vid_id, aud_id))
 
     def add_file_block(parent, seg, fid, file_dur):
         fblock = ET.SubElement(parent, "file", id=fid)
@@ -203,7 +201,7 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
         ET.SubElement(fasc2, "samplerate").text = "48000"
 
     def make_clip(parent, cid, seg, tl_start, tl_end, src_in, src_out,
-                  file_dur, self_link, link_ids, channel=None):
+                  file_dur, link_vid, link_aud, gi, is_audio=False):
         ci = ET.SubElement(parent, "clipitem", id=cid)
         ET.SubElement(ci, "name").text     = seg["name"]
         ET.SubElement(ci, "duration").text = str(tl_end - tl_start)
@@ -212,10 +210,6 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
         ET.SubElement(ci, "end").text   = str(tl_end)
         ET.SubElement(ci, "in").text    = str(src_in)
         ET.SubElement(ci, "out").text   = str(src_out)
-        if channel is not None:
-            st = ET.SubElement(ci, "sourcetrack")
-            ET.SubElement(st, "mediatype").text  = "audio"
-            ET.SubElement(st, "trackindex").text = str(channel)
         fp = seg["file_path"]
         if fp not in file_map:
             fid = "file-{}".format(file_ctr[0]); file_ctr[0] += 1
@@ -223,41 +217,23 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
             add_file_block(ci, seg, fid, file_dur)
         else:
             ET.SubElement(ci, "file", id=file_map[fp])
+        # Links — video clip links to audio, audio clip links to video
         links = ET.SubElement(ci, "links")
-        # Self-link required by FCP7 spec
-        for (lref, lmedia, ltrack, lidx, gidx) in [self_link] + link_ids:
+        for (lref, lmedia, ltrack) in [(link_vid, "video", 1), (link_aud, "audio", 1)]:
             lk = ET.SubElement(links, "link")
             ET.SubElement(lk, "linkclipref").text = lref
             ET.SubElement(lk, "mediatype").text   = lmedia
-            ET.SubElement(lk, "trackindex").text  = str(ltrack)
-            ET.SubElement(lk, "clipindex").text   = str(lidx)
-            ET.SubElement(lk, "groupindex").text  = str(gidx)
+            ET.SubElement(lk, "trackindex").text  = "1"
+            ET.SubElement(lk, "clipindex").text   = str(gi)
 
     for gi, (seg, tl_start, tl_end, src_in, src_out,
-             file_dur, vid_id, aud1_id, aud2_id) in enumerate(clip_groups, 1):
+             file_dur, vid_id, aud_id) in enumerate(clip_groups, 1):
 
-        # Video — self-link + both audio channels
         make_clip(vtrack, vid_id, seg, tl_start, tl_end, src_in, src_out,
-                  file_dur,
-                  self_link=(vid_id,  "video", 1, gi, gi),
-                  link_ids=[(aud1_id, "audio", 1, gi, gi),
-                             (aud2_id, "audio", 2, gi, gi)])
+                  file_dur, link_vid=vid_id, link_aud=aud_id, gi=gi)
 
-        # Audio ch1 (L) — self-link + video + ch2
-        make_clip(atrack1, aud1_id, seg, tl_start, tl_end, src_in, src_out,
-                  file_dur,
-                  self_link=(aud1_id, "audio", 1, gi, gi),
-                  link_ids=[(vid_id,  "video", 1, gi, gi),
-                             (aud2_id, "audio", 2, gi, gi)],
-                  channel=1)
-
-        # Audio ch2 (R) — self-link + video + ch1
-        make_clip(atrack2, aud2_id, seg, tl_start, tl_end, src_in, src_out,
-                  file_dur,
-                  self_link=(aud2_id, "audio", 2, gi, gi),
-                  link_ids=[(vid_id,  "video", 1, gi, gi),
-                             (aud1_id, "audio", 1, gi, gi)],
-                  channel=2)
+        make_clip(atrack, aud_id, seg, tl_start, tl_end, src_in, src_out,
+                  file_dur, link_vid=vid_id, link_aud=aud_id, gi=gi, is_audio=True)
 
     for m in markers:
         mk = ET.SubElement(seq, "marker")
