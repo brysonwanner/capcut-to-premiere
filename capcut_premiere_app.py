@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CapCut XML Export Tool  v1.3
+CapCut XML Export Tool  v1.3.4
 Desktop GUI — works with any CapCut project folder.
 """
 
@@ -197,6 +197,11 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
         fvsc2.append(make_rate(fps_int))
         ET.SubElement(fvsc2, "width").text  = str(width)
         ET.SubElement(fvsc2, "height").text = str(height)
+        faud2  = ET.SubElement(fmedia, "audio")
+        fasc2  = ET.SubElement(faud2, "samplecharacteristics")
+        ET.SubElement(fasc2, "depth").text      = "16"
+        ET.SubElement(fasc2, "samplerate").text = "48000"
+        ET.SubElement(faud2, "channelcount").text = "2"
 
     def make_clip(parent, cid, seg, tl_start, tl_end, src_in, src_out,
                   file_dur, link_ids, channel=None):
@@ -209,7 +214,9 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
         ET.SubElement(ci, "in").text    = str(src_in)
         ET.SubElement(ci, "out").text   = str(src_out)
         if channel is not None:
-            ET.SubElement(ci, "channelcount").text = "1"
+            st = ET.SubElement(ci, "sourcetrack")
+            ET.SubElement(st, "mediatype").text  = "audio"
+            ET.SubElement(st, "trackindex").text = str(channel)
         fp = seg["file_path"]
         if fp not in file_map:
             fid = "file-{}".format(file_ctr[0]); file_ctr[0] += 1
@@ -224,6 +231,7 @@ def build_xmeml(name, fps, duration_us, segments, markers, width=3840, height=21
             ET.SubElement(lk, "mediatype").text   = lmedia
             ET.SubElement(lk, "trackindex").text  = str(ltrack)
             ET.SubElement(lk, "clipindex").text   = "1"
+            ET.SubElement(lk, "groupindex").text  = "1"
 
     for (seg, tl_start, tl_end, src_in, src_out,
          file_dur, vid_id, aud1_id, aud2_id) in clip_groups:
@@ -306,7 +314,7 @@ class App(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("CapCut XML Export Tool  v1.3")
+        self.title("CapCut XML Export Tool  v" + APP_VERSION)
         self.resizable(True, True)
         self.minsize(680, 520)
         self._q     = queue.Queue()
